@@ -1,0 +1,169 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: food-rating-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: root
+      POSTGRES_DB: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - food-rating-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: food-rating-redis
+    ports:
+      - "6379:6379"
+    networks:
+      - food-rating-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  etcd:
+    image: quay.io/coreos/etcd:v3.6.11
+    container_name: food-rating-etcd
+    command:
+      - etcd
+      - --advertise-client-urls
+      - http://0.0.0.0:2379
+      - --listen-client-urls
+      - http://0.0.0.0:2379
+    ports:
+      - "2379:2379"
+    networks:
+      - food-rating-net
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  user-service:
+    build:
+      context: ./server
+      dockerfile: user-service/Dockerfile
+    container_name: food-rating-user-service
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: postgres
+      DB_PASSWORD: root
+      DB_NAME: postgres
+      DB_SSLMODE: disable
+      ETCD_ENDPOINTS: etcd:2379
+      SERVICE_ADDR: user-service:50051
+      SERVICE_PORT: 50051
+    depends_on:
+      postgres:
+        condition: service_healthy
+      etcd:
+        condition: service_healthy
+    networks:
+      - food-rating-net
+
+  restaurant-service:
+    build:
+      context: ./server
+      dockerfile: restaurant-service/Dockerfile
+    container_name: food-rating-restaurant-service
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: postgres
+      DB_PASSWORD: root
+      DB_NAME: postgres
+      DB_SSLMODE: disable
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      ETCD_ENDPOINTS: etcd:2379
+      SERVICE_ADDR: restaurant-service:50052
+      SERVICE_PORT: 50052
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      etcd:
+        condition: service_healthy
+    networks:
+      - food-rating-net
+
+  rating-service:
+    build:
+      context: ./server
+      dockerfile: rating-service/Dockerfile
+    container_name: food-rating-rating-service
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: postgres
+      DB_PASSWORD: root
+      DB_NAME: postgres
+      DB_SSLMODE: disable
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      ETCD_ENDPOINTS: etcd:2379
+      SERVICE_ADDR: rating-service:50053
+      SERVICE_PORT: 50053
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      etcd:
+        condition: service_healthy
+    networks:
+      - food-rating-net
+
+  api-gateway:
+    build:
+      context: ./server
+      dockerfile: api-gateway/Dockerfile
+    container_name: food-rating-api-gateway
+    ports:
+      - "8080:8080"
+    environment:
+      API_GATEWAY_PORT: 8080
+      ETCD_ENDPOINTS: etcd:2379
+    depends_on:
+      etcd:
+        condition: service_healthy
+      user-service:
+        condition: service_started
+      restaurant-service:
+        condition: service_started
+      rating-service:
+        condition: service_started
+    networks:
+      - food-rating-net
+
+  frontend:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+    container_name: food-rating-frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - api-gateway
+    networks:
+      - food-rating-net
+
+networks:
+  food-rating-net:
+    driver: bridge
+
+volumes:
+  postgres_data:

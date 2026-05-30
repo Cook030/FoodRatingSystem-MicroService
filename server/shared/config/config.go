@@ -3,6 +3,7 @@ package config
 import (
 	"log"
 	"os"
+	"strings"
 
 	"github.com/joho/godotenv"
 )
@@ -21,6 +22,9 @@ type Config struct {
 	RedisDB          int
 	JWTSecret        string
 	JWTExpirationHrs int
+	EtcdEndpoints    []string
+	ServiceName      string
+	ServiceAddr      string
 }
 
 var AppConfig *Config
@@ -43,6 +47,12 @@ func LoadConfig() {
 	jwtSecret := getEnv("JWT_SECRET", "your-secret-key-change-this-in-production")
 	jwtExp := 24
 
+	etcdEndpointsStr := getEnv("ETCD_ENDPOINTS", "localhost:2379")
+	etcdEndpoints := strings.Split(etcdEndpointsStr, ",")
+	for i, ep := range etcdEndpoints {
+		etcdEndpoints[i] = strings.TrimSpace(ep)
+	}
+
 	AppConfig = &Config{
 		ServerPort:       getEnv("API_GATEWAY_PORT", "8080"),
 		DBHost:           dbHost,
@@ -57,6 +67,9 @@ func LoadConfig() {
 		RedisDB:          redisDB,
 		JWTSecret:        jwtSecret,
 		JWTExpirationHrs: jwtExp,
+		EtcdEndpoints:    etcdEndpoints,
+		ServiceName:      getEnv("SERVICE_NAME", ""),
+		ServiceAddr:      getEnv("SERVICE_ADDR", ""),
 	}
 
 	log.Println("配置加载完成")

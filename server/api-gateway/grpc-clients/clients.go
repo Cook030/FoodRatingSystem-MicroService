@@ -9,15 +9,14 @@ import (
 	"foodRatingSystem/proto/rating"
 	"foodRatingSystem/proto/restaurant"
 	"foodRatingSystem/proto/user"
+	"foodRatingSystem/shared/registry"
 
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/health/grpc_health_v1"
 )
 
 type ServiceConfig struct {
 	Name    string
-	Address string
 	Service string
 }
 
@@ -30,24 +29,34 @@ var (
 	conns    []*grpc.ClientConn
 )
 
-func InitClients() error {
+func InitClients(etcdEndpoints []string) error {
 	services = []ServiceConfig{
-		{Name: "user-service", Address: "localhost:50051", Service: "user.UserService"},
-		{Name: "restaurant-service", Address: "localhost:50052", Service: "restaurant.RestaurantService"},
-		{Name: "rating-service", Address: "localhost:50053", Service: "rating.RatingService"},
+		{Name: "user-service", Service: "user.UserService"},
+		{Name: "restaurant-service", Service: "restaurant.RestaurantService"},
+		{Name: "rating-service", Service: "rating.RatingService"},
 	}
 
-	for _, svc := range services {
-		conn, err := grpc.NewClient(svc.Address, grpc.WithTransportCredentials(insecure.NewCredentials()))
-		if err != nil {
-			return fmt.Errorf("连接 %s 失败: %v", svc.Name, err)
-		}
-		conns = append(conns, conn)
+	userConn, err := registry.NewEtcdGrpcConn(etcdEndpoints, "user-service")
+	if err != nil {
+		return fmt.Errorf("连接 user-service 失败: %v", err)
 	}
+	conns = append(conns, userConn)
 
-	UserClient = user.NewUserServiceClient(conns[0])
-	RestaurantClient = restaurant.NewRestaurantServiceClient(conns[1])
-	RatingClient = rating.NewRatingServiceClient(conns[2])
+	restaurantConn, err := registry.NewEtcdGrpcConn(etcdEndpoints, "restaurant-service")
+	if err != nil {
+		return fmt.Errorf("连接 restaurant-service 失败: %v", err)
+	}
+	conns = append(conns, restaurantConn)
+
+	ratingConn, err := registry.NewEtcdGrpcConn(etcdEndpoints, "rating-service")
+	if err != nil {
+		return fmt.Errorf("连接 rating-service 失败: %v", err)
+	}
+	conns = append(conns, ratingConn)
+
+	UserClient = user.NewUserServiceClient(userConn)
+	RestaurantClient = restaurant.NewRestaurantServiceClient(restaurantConn)
+	RatingClient = rating.NewRatingServiceClient(ratingConn)
 
 	go startHealthCheckLoop()
 

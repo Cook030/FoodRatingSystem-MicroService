@@ -12,7 +12,7 @@ import (
 func main() {
 	config.LoadConfig()
 
-	err := grpcclients.InitClients()
+	err := grpcclients.InitClients(config.AppConfig.EtcdEndpoints)
 	if err != nil {
 		log.Fatalf("gRPC 客户端初始化失败: %v", err)
 	}

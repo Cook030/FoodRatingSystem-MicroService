@@ -2,15 +2,13 @@ package grpc_client
 
 import (
 	"foodRatingSystem/proto/restaurant"
-
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
+	"foodRatingSystem/shared/registry"
 )
 
 var RestaurantClient restaurant.RestaurantServiceClient
 
-func InitRestaurantClient() error {
-	conn, err := grpc.NewClient("localhost:50052", grpc.WithTransportCredentials(insecure.NewCredentials()))
+func InitRestaurantClient(etcdEndpoints []string) error {
+	conn, err := registry.NewEtcdGrpcConn(etcdEndpoints, "restaurant-service")
 	if err != nil {
 		return err
 	}

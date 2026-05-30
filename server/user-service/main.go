@@ -5,11 +5,15 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"os"
+	"os/signal"
+	"syscall"
 
 	pb "foodRatingSystem/proto/user"
 	"foodRatingSystem/shared/config"
 	"foodRatingSystem/shared/database"
 	"foodRatingSystem/shared/model"
+	"foodRatingSystem/shared/registry"
 	"foodRatingSystem/shared/utils"
 	"foodRatingSystem/user-service/service"
 
@@ -96,7 +100,21 @@ func main() {
 	config.LoadConfig()
 	database.Connectdb()
 
-	lis, err := net.Listen("tcp", ":50051")
+	serviceName := "user-service"
+	serviceAddr := getEnvDefault("SERVICE_ADDR", "localhost:50051")
+	port := getEnvDefault("SERVICE_PORT", "50051")
+
+	etcdRegistry, err := registry.NewEtcdRegistry(config.AppConfig.EtcdEndpoints)
+	if err != nil {
+		log.Fatalf("连接 etcd 失败: %v", err)
+	}
+
+	ctx := context.Background()
+	if err := etcdRegistry.Register(ctx, serviceName, serviceAddr); err != nil {
+		log.Fatalf("注册服务到 etcd 失败: %v", err)
+	}
+
+	lis, err := net.Listen("tcp", ":"+port)
 	if err != nil {
 		log.Fatalf("用户服务监听失败: %v", err)
 	}
@@ -108,8 +126,25 @@ func main() {
 	grpc_health_v1.RegisterHealthServer(grpcServer, healthServer)
 	healthServer.SetServingStatus("user.UserService", grpc_health_v1.HealthCheckResponse_SERVING)
 
-	fmt.Println("用户 gRPC 服务已启动，监听端口 :50051")
+	go func() {
+		quit := make(chan os.Signal, 1)
+		signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+		<-quit
+		log.Println("正在关闭用户服务...")
+		grpcServer.GracefulStop()
+		_ = etcdRegistry.Deregister(ctx, serviceName, serviceAddr)
+		_ = etcdRegistry.Close()
+	}()
+
+	fmt.Printf("用户 gRPC 服务已启动，监听端口 :%s\n", port)
 	if err := grpcServer.Serve(lis); err != nil {
 		log.Fatalf("用户服务启动失败: %v", err)
 	}
+}
+
+func getEnvDefault(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
 }

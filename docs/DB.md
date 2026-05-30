@@ -4,6 +4,9 @@
 
 - **主数据库**: PostgreSQL
 - **缓存**: Redis
+- **服务注册发现**: etcd (存储服务实例注册信息)
+
+---
 
 ## 数据模型
 
@@ -73,6 +76,8 @@
                                             └─────────────┘
 ```
 
+---
+
 ## 索引
 
 | 表 | 字段 | 类型 | 说明 |
@@ -82,15 +87,63 @@
 | ratings | user_id | INDEX | 用户 ID 索引 |
 | ratings | restaurant_id | INDEX | 餐厅 ID 索引 |
 
-## Redis 缓存
-
-Redis 用于缓存以下数据：
-
-- 餐厅列表
-- 餐厅详情
-- 附近餐厅查询结果
-- 用户会话信息
+---
 
 ## ORM
 
 项目使用 **GORM** 作为 ORM 框架，自动创建和迁移数据表。
+
+首次启动服务时会执行 `AutoMigrate`，自动创建以下表：
+- `users`
+- `restaurants`
+- `ratings`
+
+---
+
+## Redis 缓存
+
+Redis 用于缓存高频查询数据，减少数据库压力：
+
+| 缓存内容 | 键格式 | 说明 |
+|----------|--------|------|
+| 餐厅列表 | `restaurants:*` | 搜索/排序结果缓存 |
+| 餐厅详情 | `restaurant:<id>` | 单个餐厅信息缓存 |
+| 附近餐厅 | `nearby:*` | 地理位置查询结果缓存 |
+| 推荐餐厅 | `recommend:*` | 推荐算法结果缓存 |
+
+### 缓存失效机制
+
+当用户提交新的评分时，评分服务会通过 gRPC 调用餐厅服务的 `InvalidateCache` 接口，清除对应餐厅的缓存数据，确保数据一致性。
+
+```
+Rating Service ──gRPC──> Restaurant Service
+                              └── 清除 Redis 缓存
+```
+
+---
+
+## etcd 服务注册存储
+
+etcd 作为服务注册中心，各微服务启动时向 etcd 写入注册信息：
+
+### 键值结构
+
+| 键 | 值 | 说明 |
+|----|----|------|
+| `/services/user-service/localhost:50051` | `localhost:50051` | 用户服务实例地址 |
+| `/services/restaurant-service/localhost:50052` | `localhost:50052` | 餐厅服务实例地址 |
+| `/services/rating-service/localhost:50053` | `localhost:50053` | 评分服务实例地址 |
+
+### 租约机制
+
+- 注册时创建 **10 秒 TTL 租约**
+- 通过 `KeepAlive` 自动续期，服务存活期间租约持续有效
+- 服务异常宕机时，租约过期后 etcd **自动删除**注册信息
+- 服务优雅关闭时，**主动注销**注册信息
+
+### 服务发现流程
+
+1. API Gateway 启动时注册 etcd Resolver
+2. Resolver 从 etcd 拉取 `/services/<服务名>/` 前缀下的所有地址
+3. 建立 **Watch** 监听，实时感知服务实例上下线
+4. gRPC 客户端通过 **Round-Robin** 策略在可用实例间轮询调度
